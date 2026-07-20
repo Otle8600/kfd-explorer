@@ -1,9 +1,8 @@
-name: Build Unsigned KFD IPA
+name: Build Unsigned KFD kfund IPA
 
 on:
-  workflow_dispatch: # 保留手動觸發
+  workflow_dispatch:
 
-# 核心修正：明確向 GitHub 申報此任務需要寫入和讀取的最高權限，防止被隱藏
 permissions:
   contents: write
   actions: write
@@ -14,29 +13,73 @@ jobs:
 
     steps:
       - name: Checkout Repository
-        uses: actions/checkout@v4 # 必須是 v4
+        uses: actions/checkout@v4
 
       - name: Set up Xcode
         run: sudo xcode-select -s /Applications/Xcode.app
 
+      # 🔍 新增防錯步驟：在日誌中列出所有文件，幫你排查文件夾結構
+      - name: Inspect Directory Structure
+        run: |
+          echo "=== 正在檢查當前倉庫根目錄結構 ==="
+          ls -R
+
       - name: Build Xcode Project
         run: |
+          # 💡 核心修正：使用 find 指令動態搜尋 xcodeproj 實際所在的文件夾，並切換進去編ียร์
+          PROJECT_PATH=$(find . -name "*.xcodeproj" | head -n 1)
+          if [ -z "$PROJECT_PATH" ]; then
+            echo "❌ 錯誤：在整個倉庫中都找不到任何 .xcodeproj 文件！請檢查你有沒有把代碼 push 上來。"
+            exit 1
+          fi
+          
+          PROJECT_DIR=$(dirname "$PROJECT_PATH")
+          echo "[+] 成功定位項目目錄: $PROJECT_DIR"
+          cd "$PROJECT_DIR"
+          
+          # 開始編譯
           xcodebuild clean build \
             -project *.xcodeproj \
-            -scheme "kfd-explorer" \
+            -scheme "kfund" \
             -configuration Release \
             -sdk iphoneos \
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO
 
-      - name: Package to IPA
+      - name: Package to IPA with Frida Gadget
         run: |
           mkdir -p Payload
-          cp -r build/Release-iphoneos/*.app Payload/ 2>/dev/null || cp -r build/Build/Products/Release-iphoneos/*.app Payload/
-          zip -r kfd-explorer-unsigned.ipa Payload
+          
+          # 動態尋找編譯產物 .app
+          APP_PATH=$(find . -name "*.app" -path "*/Release-iphoneos/*" | head -n 1)
+          if [ -z "$APP_PATH" ]; then
+            APP_PATH=$(find ~/Library/Developer/Xcode/DerivedData -name "*.app" -path "*/Release-iphoneos/*" | head -n 1 2>/dev/null)
+          fi
+          
+          if [ -z "$APP_PATH" ]; then
+            echo "❌ 錯誤：找不到編譯生成的 .app 殼！"
+            exit 1
+          fi
+          
+          echo "[+] 找到 App 殼: $APP_PATH"
+          cp -r "$APP_PATH" Payload/
+          
+          # 動態尋找你上傳的 frida 文件並複製進 .app
+          FRIDA_DYLIB=$(find . -name "frida-gadget-16.1.11.dylib" | head -n 1)
+          FRIDA_CONFIG=$(find . -name "frida-gadget-16.1.11.config" | head -n 1)
+          
+          if [ -n "$FRIDA_DYLIB" ] && [ -n "$FRIDA_CONFIG" ]; then
+            echo "[+] 正在注入 Frida 資源..."
+            cp "$FRIDA_DYLIB" Payload/*.app/
+            cp "$FRIDA_CONFIG" Payload/*.app/
+          else
+            echo "⚠️ 警告：未在倉庫中找到 frida-gadget 文件，將打包不含 Frida 的純淨版。"
+          fi
+          
+          zip -r kfund-gadget-unsigned.ipa Payload
 
       - name: Upload Artifact
-        uses: actions/upload-artifact@v4 # 必須是 v4
+        uses: actions/upload-artifact@v4
         with:
-          name: kfd-explorer-ipa-build
-          path: kfd-explorer-unsigned.ipa
+          name: kfund-gadget-ipa
+          path: kfund-gadget-unsigned.ipa
