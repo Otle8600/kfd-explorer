@@ -27,27 +27,35 @@ jobs:
         run: |
           PROJECT_PATH=$(find . -name "*.xcodeproj" | head -n 1)
           if [ -z "$PROJECT_PATH" ]; then
-            echo "❌ 錯誤：在整個倉庫中都找不到任何 .xcodeproj 文件！"
+            echo "❌ 錯誤：找不到 .xcodeproj 文件！"
             exit 1
           fi
           
           PROJECT_DIR=$(dirname "$PROJECT_PATH")
-          echo "[+] 成功定位項目目錄: $PROJECT_DIR"
           cd "$PROJECT_DIR"
+          
+          echo "[+] 正在偵測項目的真實 Scheme..."
+          REAL_SCHEME=$(xcodebuild -list -project *.xcodeproj | sed -n '/Schemes:/,$p' | sed -1,2d | sed 's/^[[:space:]]*//' | head -n 1)
+          
+          if [ -z "$REAL_SCHEME" ]; then
+            REAL_SCHEME="kfd"
+          fi
+          echo "[+] 成功捕獲真實 Scheme: $REAL_SCHEME"
           
           xcodebuild clean build \
             -project *.xcodeproj \
-            -scheme "kfund" \
+            -scheme "$REAL_SCHEME" \
             -configuration Release \
             -sdk iphoneos \
             CODE_SIGNING_ALLOWED=NO \
-            CODE_SIGNING_REQUIRED=NO
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            COMPILER_INDEX_STORE_ENABLE=NO
 
       - name: Package to IPA with Frida Gadget
         run: |
           mkdir -p Payload
           
-          # 1. 定位編譯產物 .app
           APP_PATH=$(find . -name "*.app" -path "*/Release-iphoneos/*" | head -n 1)
           if [ -z "$APP_PATH" ]; then
             APP_PATH=$(find ~/Library/Developer/Xcode/DerivedData -name "*.app" -path "*/Release-iphoneos/*" | head -n 1 2>/dev/null)
@@ -61,11 +69,9 @@ jobs:
           echo "[+] 找到 App 殼: $APP_PATH"
           cp -r "$APP_PATH" Payload/
           
-          # 2. 🔥 【核心突破】利用你的真實 Google Drive 檔案 ID 自動物理對齊下載
           echo "[+] 正在從 Google Drive 雲端下載 38MB Frida Dylib..."
           curl -L -k -o frida-gadget-16.1.11.dylib "https://docs.google.com/uc?export=download&id=17yxSIBNGlBXfXL45YHK6_qeGZjggzjNN"
           
-          # 3. 物理封裝進 .app 內部
           FRIDA_CONFIG=$(find . -name "frida-gadget-16.1.11.config" | head -n 1)
           
           cp frida-gadget-16.1.11.dylib Payload/*.app/
